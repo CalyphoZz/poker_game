@@ -1,0 +1,19 @@
+{
+  "name": "poker-engine",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "pokersolver": "^2.1.4"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3",
+    "vitest": "^3.2.4"
+  }
+}

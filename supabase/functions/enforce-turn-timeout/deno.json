@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "@supabase/server": "npm:@supabase/server@^1",
+    "poker-engine": "../../../packages/poker-engine/src/index.ts",
+    "pokersolver": "npm:pokersolver@2.1.4"
+  }
+}
