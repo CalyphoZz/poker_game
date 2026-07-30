@@ -54,7 +54,6 @@ const { data: createData, error: createError } = await invoke(host.client, "crea
   smallBlind: 10,
   bigBlind: 20,
   startingStack: 1000,
-  maxPlayers: 2,
   turnDurationSeconds: 1, // short on purpose, so the timeout test doesn't need to wait long
 });
 assert(!createError, `create-game failed: ${createError?.message}`);
@@ -111,7 +110,6 @@ const { data: microGameData, error: microGameError } = await invoke(host.client,
   smallBlind: 10,
   bigBlind: 20,
   startingStack: 20,
-  maxPlayers: 2,
 });
 assert(!microGameError, `create-game (micro-stakes) failed: ${microGameError?.message}`);
 const microGame = microGameData.game;

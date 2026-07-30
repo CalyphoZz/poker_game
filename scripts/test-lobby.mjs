@@ -50,7 +50,7 @@ console.log("Host:", host.userId);
 
 const { data: createData, error: createError } = await host.client.functions.invoke(
   "create-game",
-  { body: { smallBlind: 10, bigBlind: 20, startingStack: 1000, maxPlayers: 3 } },
+  { body: { smallBlind: 10, bigBlind: 20, startingStack: 1000 } },
 );
 assert(!createError, `create-game failed: ${createError?.message}`);
 const game = createData.game;
@@ -87,24 +87,29 @@ const { error: badCodeError } = await stranger.client.functions.invoke("join-gam
 assert(badCodeError, "joining with an invalid code should fail");
 console.log("PASS: invalid invite code is rejected");
 
-// Capacity enforcement: this game was created with maxPlayers: 3. Host (seat
-// 1) + guest (seat 2) are already in, so a third player fills the table and
-// a fourth must be turned away rather than silently over-seated.
-const third = await signInAnon();
-const { data: thirdJoinData, error: thirdJoinError } = await third.client.functions.invoke(
-  "join-game",
-  { body: { inviteCode: game.invite_code } },
-);
-assert(!thirdJoinError, `third player join failed: ${thirdJoinError?.message}`);
-assert(thirdJoinData.player.seat_number === 3, "third player should take seat 3");
-console.log("PASS: third player fills the table (seat 3/3)");
+// Capacity enforcement: table capacity is a fixed technical ceiling (10),
+// not a host choice, since the "Joueurs max" field was removed from the
+// create flow. Host (seat 1) + guest (seat 2) are already in, so 8 more
+// joins fill the table exactly, and an 11th must be turned away rather than
+// silently over-seated.
+assert(game.max_players === 10, `expected the fixed 10-seat cap, got ${game.max_players}`);
+for (let seat = 3; seat <= 10; seat++) {
+  const extra = await signInAnon();
+  const { data: extraJoinData, error: extraJoinError } = await extra.client.functions.invoke(
+    "join-game",
+    { body: { inviteCode: game.invite_code } },
+  );
+  assert(!extraJoinError, `player for seat ${seat} failed to join: ${extraJoinError?.message}`);
+  assert(extraJoinData.player.seat_number === seat, `expected seat ${seat}, got ${extraJoinData.player.seat_number}`);
+}
+console.log("PASS: table fills to its fixed 10-seat capacity");
 
-const fourth = await signInAnon();
-const { error: fourthJoinError } = await fourth.client.functions.invoke("join-game", {
+const eleventh = await signInAnon();
+const { error: eleventhJoinError } = await eleventh.client.functions.invoke("join-game", {
   body: { inviteCode: game.invite_code },
 });
-assert(fourthJoinError, "joining a full game should fail");
-console.log("PASS: a full game rejects a fourth player");
+assert(eleventhJoinError, "joining a full (10-seat) game should fail");
+console.log("PASS: a full game rejects an 11th player");
 
 // Direct, RLS-scoped is_ready toggle (no Edge Function involved).
 const { data: readyRow, error: readyError } = await guest.client

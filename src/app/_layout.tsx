@@ -28,7 +28,6 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
-        <Stack.Screen name="create" options={{ headerShown: true, title: 'Créer une partie' }} />
         <Stack.Screen name="join" options={{ headerShown: true, title: 'Rejoindre une partie' }} />
         <Stack.Screen name="lobby/[gameId]" options={{ headerShown: true, title: 'Lobby' }} />
         <Stack.Screen name="table/[gameId]" options={{ headerShown: true, title: 'Table' }} />

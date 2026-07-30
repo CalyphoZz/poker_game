@@ -456,3 +456,27 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/rebuy/deno.json"
 entrypoint = "./functions/rebuy/index.ts"
+
+[functions.add-bot]
+enabled = true
+verify_jwt = true
+import_map = "./functions/add-bot/deno.json"
+entrypoint = "./functions/add-bot/index.ts"
+
+[functions.remove-bot]
+enabled = true
+verify_jwt = true
+import_map = "./functions/remove-bot/deno.json"
+entrypoint = "./functions/remove-bot/index.ts"
+
+[functions.bot-action]
+enabled = true
+verify_jwt = true
+import_map = "./functions/bot-action/deno.json"
+entrypoint = "./functions/bot-action/index.ts"
+
+[functions.update-game-settings]
+enabled = true
+verify_jwt = true
+import_map = "./functions/update-game-settings/deno.json"
+entrypoint = "./functions/update-game-settings/index.ts"

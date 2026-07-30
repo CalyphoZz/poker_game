@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -7,17 +7,24 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { getMyDisplayName, updateMyDisplayName } from '@/lib/profile';
 import { supabase } from '@/lib/supabase';
 
 export default function JoinGameScreen() {
   const theme = useTheme();
   const [code, setCode] = useState('');
+  const [pseudo, setPseudo] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getMyDisplayName().then(setPseudo);
+  }, []);
 
   async function handleJoin() {
     setError(null);
     setLoading(true);
+    await updateMyDisplayName(pseudo.trim());
     const { data, error: invokeError } = await supabase.functions.invoke('join-game', {
       body: { inviteCode: code.trim() },
     });
@@ -31,9 +38,27 @@ export default function JoinGameScreen() {
     router.replace(`/lobby/${data.game.id}`);
   }
 
+  const canSubmit = code.trim().length > 0 && pseudo.trim().length > 0;
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
+        <ThemedText type="small" themeColor="textSecondary">
+          Pseudo
+        </ThemedText>
+        <TextInput
+          value={pseudo}
+          onChangeText={setPseudo}
+          maxLength={24}
+          placeholder="Ton pseudo"
+          placeholderTextColor={theme.textSecondary}
+          style={[
+            styles.input,
+            styles.pseudoInput,
+            { color: theme.text, borderColor: pseudo.trim() ? theme.backgroundSelected : 'red' },
+          ]}
+        />
+
         <ThemedText type="small" themeColor="textSecondary">
           Code d&apos;invitation
         </ThemedText>
@@ -51,12 +76,12 @@ export default function JoinGameScreen() {
         {error && <ThemedText style={styles.error}>{error}</ThemedText>}
 
         <Pressable
-          disabled={code.trim().length === 0 || loading}
+          disabled={!canSubmit || loading}
           onPress={handleJoin}
           style={({ pressed }) => [
             styles.button,
             { backgroundColor: theme.text },
-            (pressed || code.trim().length === 0 || loading) && styles.pressed,
+            (pressed || !canSubmit || loading) && styles.pressed,
           ]}>
           {loading ? (
             <ActivityIndicator color={theme.background} />
@@ -91,6 +116,10 @@ const styles = StyleSheet.create({
     fontSize: 24,
     letterSpacing: 4,
     textAlign: 'center',
+  },
+  pseudoInput: {
+    fontSize: 16,
+    letterSpacing: 0,
   },
   error: {
     color: '#e5484d',

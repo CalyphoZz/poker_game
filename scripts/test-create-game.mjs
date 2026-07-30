@@ -47,7 +47,6 @@ const { data: invokeData, error: invokeError } = await supabase.functions.invoke
     smallBlind: 10,
     bigBlind: 20,
     startingStack: 1000,
-    maxPlayers: 6,
     turnDurationSeconds: 25,
   },
 });
@@ -64,6 +63,39 @@ if (!game?.id || !game.invite_code) {
   console.error("Response missing expected fields");
   process.exit(1);
 }
+
+// Table capacity is a fixed technical ceiling now, never a host choice.
+if (game.max_players !== 10) {
+  console.error("Expected max_players to always be 10, got:", game.max_players);
+  process.exit(1);
+}
+if (game.blind_increase_interval_minutes !== 10 || game.next_blind_increase_at !== null) {
+  console.error("Expected a fresh game to default to a 10min blind timer, not yet started:", game);
+  process.exit(1);
+}
+console.log("PASS: fixed 10-seat capacity and default blind timer are in place.");
+
+// The home screen's "Créer une partie" now calls create-game with an empty
+// body and expects sane defaults for everything.
+const { data: defaultsData, error: defaultsError } = await supabase.functions.invoke("create-game", {
+  body: {},
+});
+if (defaultsError) {
+  console.error("create-game with an empty body failed:", defaultsError);
+  process.exit(1);
+}
+const defaultsGame = defaultsData.game;
+if (
+  defaultsGame.small_blind !== 10 ||
+  defaultsGame.big_blind !== 20 ||
+  defaultsGame.starting_stack !== 1000 ||
+  defaultsGame.turn_duration_seconds !== 25 ||
+  defaultsGame.blind_increase_interval_minutes !== 10
+) {
+  console.error("Unexpected defaults for an empty-body create-game call:", defaultsGame);
+  process.exit(1);
+}
+console.log("PASS: create-game with no body at all uses sane defaults.");
 
 const { data: playerRows, error: playerError } = await supabase
   .from("game_players")

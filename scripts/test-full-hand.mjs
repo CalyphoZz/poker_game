@@ -56,7 +56,6 @@ const { data: createData, error: createError } = await invoke(host.client, "crea
   smallBlind: 10,
   bigBlind: 20,
   startingStack: 1000,
-  maxPlayers: 2,
 });
 assert(!createError, `create-game failed: ${createError?.message}`);
 const game = createData.game;

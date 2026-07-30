@@ -5,3 +5,4 @@ export * from "./deck.ts";
 export * from "./handEval.ts";
 export * from "./sidePots.ts";
 export * from "./hand.ts";
+export * from "./bot.ts";

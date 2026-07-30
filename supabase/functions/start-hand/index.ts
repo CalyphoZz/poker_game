@@ -72,11 +72,52 @@ export default {
     const handNumber = (lastHand?.hand_number ?? 0) + 1;
     const previousDealerId = lastHand?.dealer_user_id ?? null;
 
+    // Blinds actually increase on a timer, or it isn't poker. The clock
+    // starts the moment this game deals its first hand (next_blind_increase_at
+    // is NULL until then); every hand after that checks whether the deadline
+    // has passed and, if so, doubles blinds once per elapsed interval -- a
+    // loop rather than a single bump, so a table left idle past several
+    // intervals catches up correctly instead of forever applying only one
+    // level no matter how long play was paused.
+    let smallBlind = game.small_blind;
+    let bigBlind = game.big_blind;
+    let currentBlindLevel = game.current_blind_level;
+    const intervalMs = game.blind_increase_interval_minutes * 60_000;
+    let nextBlindIncreaseAt = game.next_blind_increase_at
+      ? new Date(game.next_blind_increase_at)
+      : null;
+    let blindsChanged = false;
+
+    if (nextBlindIncreaseAt === null) {
+      nextBlindIncreaseAt = new Date(Date.now() + intervalMs);
+      blindsChanged = true;
+    } else {
+      while (nextBlindIncreaseAt.getTime() <= Date.now()) {
+        smallBlind *= 2;
+        bigBlind *= 2;
+        currentBlindLevel += 1;
+        nextBlindIncreaseAt = new Date(nextBlindIncreaseAt.getTime() + intervalMs);
+        blindsChanged = true;
+      }
+    }
+
+    if (blindsChanged) {
+      await admin
+        .from("games")
+        .update({
+          small_blind: smallBlind,
+          big_blind: bigBlind,
+          current_blind_level: currentBlindLevel,
+          next_blind_increase_at: nextBlindIncreaseAt.toISOString(),
+        })
+        .eq("id", gameId);
+    }
+
     const result = startNewHand({
       players: eligiblePlayers.map((p) => ({ id: p.user_id, stack: p.stack })),
       previousDealerId,
-      smallBlind: game.small_blind,
-      bigBlind: game.big_blind,
+      smallBlind,
+      bigBlind,
     });
     const { state } = result;
 

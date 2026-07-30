@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -17,6 +17,8 @@ interface ActiveGame {
 export default function HomeScreen() {
   const theme = useTheme();
   const [activeGames, setActiveGames] = useState<ActiveGame[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // A force-quit + relaunch has no local memory of "which game was I in" --
   // the server already knows via game_players, so check that instead of
@@ -50,6 +52,21 @@ export default function HomeScreen() {
     };
   }, []);
 
+  // Straight into the lobby with sane defaults -- no config form up front.
+  // The host adjusts blinds/stack/timers afterward from the lobby's
+  // settings wheel, which feels far less "web form" on a phone.
+  async function handleCreateGame() {
+    setCreateError(null);
+    setCreating(true);
+    const { data, error } = await supabase.functions.invoke('create-game', { body: {} });
+    setCreating(false);
+    if (error) {
+      setCreateError(error.message ?? 'Impossible de créer la partie.');
+      return;
+    }
+    router.replace(`/lobby/${data.game.id}`);
+  }
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
@@ -81,17 +98,24 @@ export default function HomeScreen() {
           </ThemedView>
         )}
 
+        {createError && <ThemedText style={styles.error}>{createError}</ThemedText>}
+
         <ThemedView style={styles.actions}>
           <Pressable
-            onPress={() => router.push('/create')}
+            onPress={handleCreateGame}
+            disabled={creating}
             style={({ pressed }) => [
               styles.button,
               { backgroundColor: theme.text },
-              pressed && styles.pressed,
+              (pressed || creating) && styles.pressed,
             ]}>
-            <ThemedText style={[styles.buttonText, { color: theme.background }]}>
-              Créer une partie
-            </ThemedText>
+            {creating ? (
+              <ActivityIndicator color={theme.background} />
+            ) : (
+              <ThemedText style={[styles.buttonText, { color: theme.background }]}>
+                Créer une partie
+              </ThemedText>
+            )}
           </Pressable>
 
           <Pressable
@@ -137,6 +161,10 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 360,
     gap: Spacing.two,
+  },
+  error: {
+    color: '#e5484d',
+    textAlign: 'center',
   },
   button: {
     paddingVertical: Spacing.three,

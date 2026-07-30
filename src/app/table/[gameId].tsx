@@ -1,15 +1,25 @@
+import Slider from '@react-native-community/slider';
 import { router, useLocalSearchParams } from 'expo-router';
 import { evaluateHand } from 'poker-engine';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  Modal,
+  Pressable,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FloatingWinText } from '@/components/floating-win-text';
 import { PlayingCard } from '@/components/playing-card';
+import { TableFelt } from '@/components/table-felt';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import { TimerRing } from '@/components/timer-ring';
 import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { getAvatarEmoji } from '@/lib/avatarEmoji';
 import { generateClientActionId } from '@/lib/clientActionId';
 import { supabase } from '@/lib/supabase';
 
@@ -50,64 +60,75 @@ interface HandActionRow {
   sequence_number: number;
 }
 
-const FELT = '#0f4a30';
 const FELT_EDGE = '#0a3521';
 const GOLD = '#f5c942';
+const GREEN = '#3ddc84';
+const RED = '#c0392b';
+// The table screen is a dedicated dark "game" surface, fixed regardless of
+// the rest of the app's light/dark system theme -- matching how poker/casino
+// apps look, and because white game-felt text needs a dark surround to stay
+// readable no matter what theme the phone is set to.
+const DARK_BG = '#10141a';
+const DARK_SURFACE = '#1b212b';
+const TEXT_LIGHT = '#ffffff';
+const TEXT_MUTED = '#9aa4b0';
 
-const ACTION_LABEL: Record<string, string> = {
-  post_sb: 'petite blinde',
-  post_bb: 'grosse blinde',
-  fold: 'se couche',
-  check: 'check',
-  call: 'suit',
-  raise: 'relance',
-  all_in: 'all-in',
+// The mockup mixes English poker shorthand with French for the raise action
+// specifically ("RELANCE") -- kept verbatim rather than fully translating,
+// since that's literally what was asked to match.
+const ACTION_BADGE_LABEL: Record<string, string> = {
+  post_sb: 'SB',
+  post_bb: 'BB',
+  fold: 'FOLD',
+  check: 'CHECK',
+  call: 'CALL',
+  raise: 'RELANCE',
+  all_in: 'ALL-IN',
 };
+const RAISE_TYPES = new Set(['raise', 'all_in']);
 
-const OVAL_WIDTH = 380;
-const OVAL_HEIGHT = 260;
-const SEAT_SIZE = 64;
-const SEAT_ROW_TOP = 14;
 const AUTO_NEXT_HAND_DELAY_MS = 3200;
-
-// Opponents sit in a single row fixed to the top of the table; the
-// center/lower area is reserved entirely for the board + pot so they never
-// fight for the same space (a trig-based ellipse placement used to let
-// seats drift down into the board's vertical band on tables with 1-2
-// opponents -- a fixed row sidesteps that entirely).
-function seatPosition(index: number, count: number) {
-  const usableWidth = OVAL_WIDTH - 32;
-  const spacing = usableWidth / (count + 1);
-  const x = 16 + spacing * (index + 1);
-  return { left: x - SEAT_SIZE / 2, top: SEAT_ROW_TOP };
-}
+const SEAT_MAX_WIDTH = 92;
+// A mobile screen (portrait or landscape) is never tall/wide enough to place
+// opponents at fixed pixel coordinates and guarantee they never collide with
+// the board -- a real flexbox layout (opponents wrap naturally, the board
+// takes whatever space is left in the middle, "me" sits at the bottom)
+// adapts to any screen size instead of needing hand-tuned constants per
+// device, which is the whole point of "responsive".
 
 export default function TableScreen() {
   const { gameId } = useLocalSearchParams<{ gameId: string }>();
-  const theme = useTheme();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLandscape = windowWidth > windowHeight;
 
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [gameTurnDuration, setGameTurnDuration] = useState<number | null>(null);
+  const [blinds, setBlinds] = useState<{ small: number; big: number } | null>(null);
+  const [botUserIds, setBotUserIds] = useState<Set<string>>(new Set());
   const [hand, setHand] = useState<HandRow | null>(null);
   const [handPlayers, setHandPlayers] = useState<HandPlayerRow[]>([]);
   const [holeCards, setHoleCards] = useState<Record<string, [string, string]>>({});
   const [actions, setActions] = useState<HandActionRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [raiseText, setRaiseText] = useState('');
+  const [raiseAmount, setRaiseAmount] = useState(0);
+  const [sliderResetKey, setSliderResetKey] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [startingNext, setStartingNext] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [rebuying, setRebuying] = useState(false);
   const [nextHandCountdown, setNextHandCountdown] = useState<number | null>(null);
+  const [gamePlayers, setGamePlayers] = useState<{ user_id: string; stack: number; status: string }[]>([]);
+  const [gameOverDismissedFor, setGameOverDismissedFor] = useState<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [chipFlightVisible, setChipFlightVisible] = useState(false);
-  const [chipFlightTarget, setChipFlightTarget] = useState({ x: 0, y: 0 });
   const timeoutCalledForRef = useRef<string | null>(null);
+  const botActionCalledForRef = useRef<string | null>(null);
   const autoNextCalledForRef = useRef<string | null>(null);
   const chipFlightPlayedForRef = useRef<string | null>(null);
   const pulse = useRef(new Animated.Value(1)).current;
   const potPulse = useRef(new Animated.Value(1)).current;
-  const winnerGlow = useRef(new Animated.Value(0)).current;
   const chipFlight = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const previousPotRef = useRef(0);
 
@@ -131,6 +152,18 @@ export default function TableScreen() {
     setHoleCards(next);
   }, []);
 
+  // Live stacks for the whole game (not just this hand) -- needed to know
+  // whether the game can actually continue: hand_players.stack is a
+  // snapshot frozen at the moment THIS hand ended, so it goes stale the
+  // instant someone rebuys, which is exactly the moment that matters here.
+  const refreshGamePlayers = useCallback(async () => {
+    const { data } = await supabase
+      .from('game_players')
+      .select('user_id, stack, status')
+      .eq('game_id', gameId);
+    setGamePlayers(data ?? []);
+  }, [gameId]);
+
   const refreshActions = useCallback(async (handId: string) => {
     const { data } = await supabase
       .from('hand_actions')
@@ -152,10 +185,20 @@ export default function TableScreen() {
 
       const { data: game } = await supabase
         .from('games')
-        .select('turn_duration_seconds')
+        .select('turn_duration_seconds, small_blind, big_blind')
         .eq('id', gameId)
         .single();
       if (isMounted) setGameTurnDuration(game?.turn_duration_seconds ?? null);
+      if (isMounted && game) setBlinds({ small: game.small_blind, big: game.big_blind });
+
+      const { data: botPlayers } = await supabase
+        .from('game_players')
+        .select('user_id')
+        .eq('game_id', gameId)
+        .eq('is_bot', true);
+      if (isMounted) setBotUserIds(new Set((botPlayers ?? []).map((p) => p.user_id)));
+
+      await refreshGamePlayers();
 
       const { data: latestHand } = await supabase
         .from('hands')
@@ -184,13 +227,26 @@ export default function TableScreen() {
           setHand(payload.new as HandRow);
         },
       )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${gameId}` },
+        (payload) => {
+          const updated = payload.new as { small_blind: number; big_blind: number };
+          setBlinds({ small: updated.small_blind, big: updated.big_blind });
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'game_players', filter: `game_id=eq.${gameId}` },
+        () => refreshGamePlayers(),
+      )
       .subscribe();
 
     return () => {
       isMounted = false;
       supabase.removeChannel(channel);
     };
-  }, [gameId]);
+  }, [gameId, refreshGamePlayers]);
 
   // Whenever the current hand id changes, (re)subscribe to its players/
   // actions and fetch hole cards fresh (never delivered over Realtime).
@@ -255,6 +311,30 @@ export default function TableScreen() {
     return () => clearInterval(interval);
   }, [hand?.id, hand?.status, hand?.turn_deadline]);
 
+  // Bots don't have a human sitting at a screen to press buttons, so any
+  // connected client nudges the server the moment it observes a bot's turn
+  // -- same "any client can trigger it, server no-ops if it's wrong" pattern
+  // as enforce-turn-timeout. A short delay makes the bot feel like it's
+  // "thinking" instead of instant, and the ref guard stops every client from
+  // firing the same call redundantly on each Realtime update.
+  useEffect(() => {
+    if (!hand || hand.status !== 'in_progress' || !hand.current_turn_user_id) return;
+    if (!botUserIds.has(hand.current_turn_user_id)) return;
+    // actions.length strictly increases by exactly one every time the turn
+    // advances (including the bot's own prior actions), so it uniquely
+    // identifies "it's this bot's turn after N actions" -- unlike pot_total,
+    // which can repeat across streets when nobody has bet yet (e.g. a check
+    // round), which would otherwise block a legitimate later call.
+    const key = `${hand.id}-${hand.current_turn_user_id}-${actions.length}`;
+    if (botActionCalledForRef.current === key) return;
+    botActionCalledForRef.current = key;
+
+    const timeout = setTimeout(() => {
+      supabase.functions.invoke('bot-action', { body: { handId: hand.id } });
+    }, 900);
+    return () => clearTimeout(timeout);
+  }, [hand?.id, hand?.status, hand?.current_turn_user_id, botUserIds, actions.length]);
+
   // A gentle pulse on whoever's turn it is -- cheap "something needs your
   // attention" feedback without a full animation library.
   useEffect(() => {
@@ -280,22 +360,6 @@ export default function TableScreen() {
     previousPotRef.current = hand.pot_total;
   }, [hand?.pot_total, potPulse]);
 
-  // A glowing pulse around the winner(s) once a hand resolves.
-  useEffect(() => {
-    if (hand?.status !== 'complete') {
-      winnerGlow.setValue(0);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(winnerGlow, { toValue: 1, duration: 700, useNativeDriver: true }),
-        Animated.timing(winnerGlow, { toValue: 0.3, duration: 700, useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [hand?.status, winnerGlow]);
-
   const me = handPlayers.find((p) => p.user_id === myUserId);
   const myCards = myUserId ? holeCards[myUserId] : undefined;
   const opponents = handPlayers.filter((p) => p.user_id !== myUserId);
@@ -313,30 +377,50 @@ export default function TableScreen() {
     return ids;
   }, [hand?.winners]);
 
-  // Chips visually fly from the pot to the winner's seat (or toward "my"
-  // panel below the table when I win) the moment a hand resolves.
+  // Summed per player across every pot (a side-pot hand can have the same
+  // player win more than one pot) -- feeds the FloatingWinText next to each
+  // winning seat.
+  const winningsByUserId = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const pot of hand?.winners ?? []) {
+      for (const winnerId of pot.winnerIds) {
+        totals[winnerId] = (totals[winnerId] ?? 0) + (pot.amounts[winnerId] ?? 0);
+      }
+    }
+    return totals;
+  }, [hand?.winners]);
+
+  // Each seat shows its own small action badge (FOLD/CHECK/CALL/RELANCE)
+  // instead of one global "last action" line -- only for the CURRENT street,
+  // since a check from three streets ago shouldn't still be showing.
+  const actionByUserThisStreet = useMemo(() => {
+    const map: Record<string, HandActionRow> = {};
+    for (const a of actions) {
+      if (a.street !== hand?.current_street) continue;
+      map[a.user_id] = a;
+    }
+    return map;
+  }, [actions, hand?.current_street]);
+
+  // Chips visually drift from the pot toward the winner's side of the table
+  // (up toward the opponents, or down toward "me") the moment a hand
+  // resolves -- a coarse directional cue rather than a pixel-precise one,
+  // since seats are laid out by flexbox now (no fixed coordinates to target).
+  // The precise "who won how much" signal is the FloatingWinText next to
+  // their name.
   useEffect(() => {
     if (!hand || hand.status !== 'complete' || !hand.winners?.length) return;
     if (chipFlightPlayedForRef.current === hand.id) return;
     chipFlightPlayedForRef.current = hand.id;
 
     const winnerId = hand.winners[0].winnerIds[0];
-    const oppIndex = opponents.findIndex((o) => o.user_id === winnerId);
-    const potOrigin = { x: OVAL_WIDTH / 2, y: SEAT_ROW_TOP + SEAT_SIZE + 62 + 20 };
-    const target =
-      oppIndex !== -1
-        ? (() => {
-            const pos = seatPosition(oppIndex, opponents.length);
-            return { x: pos.left + SEAT_SIZE / 2, y: pos.top + SEAT_SIZE / 2 };
-          })()
-        : { x: OVAL_WIDTH / 2, y: OVAL_HEIGHT + 20 };
+    const winnerIsMe = winnerId === myUserId;
 
-    setChipFlightTarget(potOrigin);
     chipFlight.setValue({ x: 0, y: 0 });
     setChipFlightVisible(true);
     Animated.timing(chipFlight, {
-      toValue: { x: target.x - potOrigin.x, y: target.y - potOrigin.y },
-      duration: 900,
+      toValue: { x: 0, y: winnerIsMe ? 60 : -60 },
+      duration: 700,
       useNativeDriver: true,
     }).start(() => setChipFlightVisible(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -344,9 +428,13 @@ export default function TableScreen() {
 
   // The next hand starts on its own a couple of seconds after this one
   // resolves -- long enough to see the reveal/chip animation, short enough
-  // that nobody has to sit around clicking "next hand" between rounds.
+  // that nobody has to sit around clicking "next hand" between rounds. But
+  // only while at least 2 players actually have chips to play with --
+  // otherwise start-hand would just reject it every time (see the
+  // "Partie terminée" branch below), so there's no point auto-retrying.
   useEffect(() => {
-    if (!hand || hand.status !== 'complete') {
+    const playersWithChipsNow = gamePlayers.filter((p) => p.status !== 'left' && p.stack > 0).length;
+    if (!hand || hand.status !== 'complete' || playersWithChipsNow < 2) {
       setNextHandCountdown(null);
       return;
     }
@@ -371,7 +459,7 @@ export default function TableScreen() {
       clearInterval(interval);
       clearTimeout(timeout);
     };
-  }, [hand?.status, hand?.id, gameId]);
+  }, [hand?.status, hand?.id, gameId, gamePlayers]);
 
   const isMyTurn = hand?.status === 'in_progress' && hand.current_turn_user_id === myUserId;
   const turnProgress =
@@ -380,9 +468,18 @@ export default function TableScreen() {
   const minRaiseTarget = hand ? hand.current_bet + hand.min_raise : 0;
   const maxRaiseTarget = me ? me.stack + me.committed_this_street : 0;
 
+  // The slider is an uncontrolled component (its `value` prop is only read
+  // once, on mount) so nudging raiseAmount from a quick-bet button has to
+  // force a remount via sliderResetKey to actually move the thumb -- dragging
+  // itself never needs this, since RN Slider tracks its own gesture state.
+  function setRaiseAmountAndResetSlider(v: number) {
+    setRaiseAmount(v);
+    setSliderResetKey((k) => k + 1);
+  }
+
   useEffect(() => {
     if (isMyTurn) {
-      setRaiseText(String(Math.min(maxRaiseTarget, minRaiseTarget)));
+      setRaiseAmountAndResetSlider(Math.min(maxRaiseTarget, minRaiseTarget));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMyTurn, minRaiseTarget]);
@@ -410,8 +507,10 @@ export default function TableScreen() {
 
   function setQuickRaise(fraction: number) {
     const target = hand ? hand.current_bet + toCall + (hand.pot_total + toCall) * fraction : 0;
-    setRaiseText(String(clampRaise(target)));
+    setRaiseAmountAndResetSlider(clampRaise(target));
   }
+
+  const raiseStep = Math.max(1, Math.round((maxRaiseTarget - minRaiseTarget) / 100));
 
   async function handleStartNext() {
     if (hand) autoNextCalledForRef.current = hand.id;
@@ -426,290 +525,360 @@ export default function TableScreen() {
     setRebuying(false);
   }
 
+  async function handleLeaveGame() {
+    setLeaving(true);
+    await supabase.functions.invoke('leave-game', { body: { gameId } });
+    setLeaving(false);
+    router.replace('/');
+  }
+
+  // How many players could still deal a next hand right now -- hand_players
+  // is a per-hand snapshot that goes stale the moment someone rebuys, so
+  // this reads the live game_players stacks instead (see refreshGamePlayers).
+  const playersWithChips = gamePlayers.filter((p) => p.status !== 'left' && p.stack > 0).length;
+  const isGameOver = hand?.status === 'complete' && playersWithChips < 2;
+
   if (loading || !hand) {
     return (
-      <ThemedView style={styles.container}>
+      <View style={styles.container}>
         <SafeAreaView style={[styles.safeArea, styles.centered]}>
-          <ActivityIndicator color={theme.text} />
+          <ActivityIndicator color={TEXT_LIGHT} />
         </SafeAreaView>
-      </ThemedView>
+      </View>
     );
   }
 
-  const lastAction = actions[actions.length - 1];
+  function renderSeat(player: HandPlayerRow, key: string) {
+    const isActing = player.user_id === hand!.current_turn_user_id && hand!.status === 'in_progress';
+    const isWinner = hand!.status === 'complete' && winnerIdSet.has(player.user_id);
+    const isMe = player.user_id === myUserId;
+    const emoji = getAvatarEmoji(player.profiles?.display_name);
+    const action = actionByUserThisStreet[player.user_id];
+    const revealedCards = hand!.status === 'complete' ? holeCards[player.user_id] : undefined;
+    const showFaceDown = !isMe && !player.is_folded && hand!.status === 'in_progress' && !revealedCards;
+    const winAmount = winningsByUserId[player.user_id] ?? 0;
 
-  return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.header}>
-          <ThemedText type="smallBold">Main #{hand.hand_number}</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {hand.current_street}
-          </ThemedText>
-        </ThemedView>
-
-        <View style={styles.oval}>
-          {opponents.map((item, index) => {
-            const pos = seatPosition(index, opponents.length);
-            const isActing = item.user_id === hand.current_turn_user_id && hand.status === 'in_progress';
-            const isWinner = hand.status === 'complete' && winnerIdSet.has(item.user_id);
-            return (
-              <Animated.View
-                key={item.id}
-                style={[
-                  styles.seat,
-                  { left: pos.left, top: pos.top },
-                  isActing && { transform: [{ scale: pulse.interpolate({ inputRange: [0.4, 1], outputRange: [1.06, 1] }) }] },
-                ]}>
-                <View style={styles.avatarWrap}>
-                  {isActing && (
-                    <TimerRing size={52} strokeWidth={3} progress={turnProgress} />
-                  )}
-                  <View
-                    style={[
-                      styles.avatar,
-                      isActing && styles.avatarActing,
-                      isWinner && styles.avatarWinner,
-                      item.is_folded && styles.avatarFolded,
-                    ]}>
-                    <ThemedText style={styles.avatarInitial}>
-                      {(item.profiles?.display_name ?? '?').slice(0, 1).toUpperCase()}
-                    </ThemedText>
-                    {item.seat_number === hand.dealer_seat && (
-                      <View style={styles.dealerChip}>
-                        <ThemedText style={styles.dealerChipText}>D</ThemedText>
-                      </View>
-                    )}
-                  </View>
-                </View>
-                <ThemedText
-                  type="small"
-                  style={[styles.seatName, isActing && styles.seatNameActing]}
-                  numberOfLines={1}>
-                  {item.profiles?.display_name ?? 'Joueur'}
-                  {isWinner ? ' 🏆' : ''}
-                </ThemedText>
-                <ThemedText style={styles.seatStack}>
-                  {item.stack}
-                  {item.is_folded ? ' · couché' : item.is_all_in ? ' · all-in' : ''}
-                </ThemedText>
-                {item.committed_this_street > 0 && (
-                  <View style={styles.betPill}>
-                    <ThemedText style={styles.betPillText}>{item.committed_this_street}</ThemedText>
-                  </View>
+    return (
+      <Animated.View
+        key={key}
+        style={[
+          styles.seat,
+          isActing && { transform: [{ scale: pulse.interpolate({ inputRange: [0.4, 1], outputRange: [1.05, 1] }) }] },
+        ]}>
+        <View style={styles.seatCardsRow}>
+          {isMe && myCards
+            ? myCards.map((c, i) => <PlayingCard key={i} card={c} size="medium" />)
+            : revealedCards
+              ? revealedCards.map((c, i) => <PlayingCard key={i} card={c} size="small" />)
+              : showFaceDown && (
+                  <>
+                    <View style={[styles.faceDownCard, styles.faceDownCardOffset]} />
+                    <View style={styles.faceDownCard} />
+                  </>
                 )}
-                {hand.status === 'complete' && holeCards[item.user_id] && (
-                  <View style={styles.seatCards}>
-                    {holeCards[item.user_id].map((c, i) => (
-                      <PlayingCard key={i} card={c} size="small" />
-                    ))}
-                  </View>
-                )}
-              </Animated.View>
-            );
-          })}
-
-          <View style={styles.centerArea}>
-            <View style={styles.boardCards}>
-              {hand.board_cards.map((c, i) => (
-                <PlayingCard key={i} card={c} size="medium" />
-              ))}
-            </View>
-            <Animated.View style={[styles.potPill, { transform: [{ scale: potPulse }] }]}>
-              <ThemedText style={styles.potPillText}>Pot {hand.pot_total}</ThemedText>
-            </Animated.View>
-          </View>
-
-          {chipFlightVisible && (
-            <Animated.View
-              style={[
-                styles.flyingChip,
-                {
-                  left: chipFlightTarget.x - 12,
-                  top: chipFlightTarget.y - 12,
-                  transform: chipFlight.getTranslateTransform(),
-                },
-              ]}>
-              <ThemedText style={styles.flyingChipText}>●</ThemedText>
-            </Animated.View>
-          )}
         </View>
 
-        {lastAction && hand.status === 'in_progress' && (
-          <ThemedText type="small" themeColor="textSecondary" style={styles.logLine}>
-            {handPlayers.find((p) => p.user_id === lastAction.user_id)?.profiles?.display_name ?? 'Joueur'}{' '}
-            {ACTION_LABEL[lastAction.action_type] ?? lastAction.action_type}
-            {lastAction.amount > 0 ? ` (${lastAction.amount})` : ''}
-          </ThemedText>
-        )}
-
-        <ThemedView style={styles.myArea}>
-          {me && (
-            <View style={styles.avatarWrap}>
-              {isMyTurn && <TimerRing size={48} strokeWidth={3} progress={turnProgress} />}
-              <View
-                style={[
-                  styles.myAvatar,
-                  isMyTurn && styles.avatarActing,
-                  hand.status === 'complete' && winnerIdSet.has(me.user_id) && styles.avatarWinner,
-                ]}>
-                <ThemedText style={styles.avatarInitial}>
-                  {(me.profiles?.display_name ?? '?').slice(0, 1).toUpperCase()}
-                </ThemedText>
-              </View>
+        <View style={styles.avatarWrap}>
+          {isActing && (
+            <View style={[styles.timerRingBox, isMe && styles.timerRingBoxMe]}>
+              <TimerRing size={isMe ? 54 : 46} strokeWidth={3} color={GREEN} progress={turnProgress} />
             </View>
           )}
-          <View style={styles.myCardsRow}>
-            {myCards ? myCards.map((c, i) => <PlayingCard key={i} card={c} size="large" />) : null}
+          <View style={[styles.avatar, isMe && styles.avatarMe, isWinner && styles.avatarWinner]}>
+            <ThemedText style={styles.avatarEmoji}>
+              {emoji ?? (player.profiles?.display_name ?? '?').slice(0, 1).toUpperCase()}
+            </ThemedText>
           </View>
-          <View style={styles.myInfo}>
-            <ThemedText type="smallBold">{me?.stack ?? 0} jetons</ThemedText>
-            {bestHand && (
-              <ThemedText type="small" themeColor="textSecondary">
-                {bestHand.descr}
-              </ThemedText>
-            )}
-          </View>
-        </ThemedView>
+          {player.seat_number === hand!.dealer_seat && (
+            <View style={styles.dealerDisc}>
+              <ThemedText style={styles.dealerDiscText}>D</ThemedText>
+            </View>
+          )}
+          <FloatingWinText amount={winAmount} triggerKey={hand!.id} />
+        </View>
 
-        {me?.stack === 0 && (
-          <Pressable
-            onPress={handleRebuy}
-            disabled={rebuying}
-            style={({ pressed }) => [
-              styles.button,
-              styles.secondaryButton,
-              { borderColor: theme.text },
-              (pressed || rebuying) && styles.pressed,
+        <View style={styles.namePill}>
+          <ThemedText numberOfLines={1} style={[styles.namePillText, isWinner && styles.namePillTextWinner]}>
+            {isMe ? 'Moi' : (player.profiles?.display_name ?? 'Joueur')}
+            {isWinner ? ' 🏆' : ''}
+          </ThemedText>
+          <ThemedText style={styles.namePillStack}>{player.stack}</ThemedText>
+        </View>
+
+        {player.is_all_in ? (
+          <View style={styles.allInBadge}>
+            <ThemedText style={styles.allInBadgeText}>ALL-IN</ThemedText>
+          </View>
+        ) : action && hand!.status === 'in_progress' ? (
+          <View
+            style={[
+              styles.actionBadge,
+              action.action_type === 'fold' && styles.actionBadgeFold,
+              RAISE_TYPES.has(action.action_type) && styles.actionBadgeRaise,
             ]}>
-            {rebuying ? (
-              <ActivityIndicator color={theme.text} />
-            ) : (
-              <ThemedText style={styles.buttonText}>Rebuy</ThemedText>
-            )}
-          </Pressable>
+            <ThemedText style={styles.actionBadgeText}>
+              {ACTION_BADGE_LABEL[action.action_type]}
+              {player.committed_this_street > 0 ? ` ${player.committed_this_street}` : ''}
+            </ThemedText>
+          </View>
+        ) : player.committed_this_street > 0 ? (
+          <View style={styles.betChip}>
+            <ThemedText style={styles.betChipText}>● {player.committed_this_street}</ThemedText>
+          </View>
+        ) : null}
+        {isMe && bestHand && (
+          <ThemedText type="small" style={styles.myHandDescr}>
+            {bestHand.descr}
+          </ThemedText>
         )}
+      </Animated.View>
+    );
+  }
 
-        {hand.status === 'complete' ? (
-          <ThemedView style={styles.actions}>
-            {hand.winners?.map((pot) => (
-              <ThemedText key={pot.potIndex}>
-                Pot {pot.potIndex + 1} ({pot.amount}) :{' '}
-                {pot.winnerIds
-                  .map((id) => handPlayers.find((p) => p.user_id === id)?.profiles?.display_name ?? id)
-                  .join(', ')}
-              </ThemedText>
-            ))}
-            <Pressable
-              onPress={handleStartNext}
-              disabled={startingNext}
-              style={({ pressed }) => [
-                styles.button,
-                { backgroundColor: theme.text },
-                (pressed || startingNext) && styles.pressed,
-              ]}>
-              {startingNext ? (
-                <ActivityIndicator color={theme.background} />
-              ) : (
-                <ThemedText style={[styles.buttonText, { color: theme.background }]}>
-                  {nextHandCountdown ? `Main suivante dans ${nextHandCountdown}s...` : 'Main suivante'}
+  const stepper = (
+    <View style={styles.stepperRow}>
+      <Pressable
+        onPress={() => setRaiseAmountAndResetSlider(clampRaise(raiseAmount - raiseStep))}
+        disabled={!isMyTurn || submitting}
+        style={({ pressed }) => [styles.stepperButton, pressed && styles.pressed]}>
+        <ThemedText style={styles.stepperButtonText}>−</ThemedText>
+      </Pressable>
+      <View style={styles.amountBox}>
+        <ThemedText style={styles.amountBoxText}>{raiseAmount}</ThemedText>
+      </View>
+      <Pressable
+        onPress={() => setRaiseAmountAndResetSlider(clampRaise(raiseAmount + raiseStep))}
+        disabled={!isMyTurn || submitting}
+        style={({ pressed }) => [styles.stepperButton, pressed && styles.pressed]}>
+        <ThemedText style={styles.stepperButtonText}>+</ThemedText>
+      </Pressable>
+    </View>
+  );
+
+  const sliderEl = (
+    <Slider
+      key={sliderResetKey}
+      style={styles.slider}
+      minimumValue={minRaiseTarget}
+      maximumValue={Math.max(maxRaiseTarget, minRaiseTarget)}
+      step={raiseStep}
+      value={raiseAmount}
+      onValueChange={setRaiseAmount}
+      disabled={!isMyTurn || submitting}
+      minimumTrackTintColor={RED}
+      maximumTrackTintColor={DARK_SURFACE}
+      thumbTintColor={RED}
+    />
+  );
+
+  const presetsEl = (
+    <View style={styles.presetRow}>
+      <PresetChip label="Min" onPress={() => setRaiseAmountAndResetSlider(clampRaise(minRaiseTarget))} />
+      <PresetChip label="1/2 Pot" onPress={() => setQuickRaise(0.5)} />
+      <PresetChip label="Pot" onPress={() => setQuickRaise(1)} />
+      <PresetChip label="Max" onPress={() => setRaiseAmountAndResetSlider(clampRaise(maxRaiseTarget))} />
+    </View>
+  );
+
+  const foldButton = (
+    <Pressable
+      onPress={() => submitAction('fold')}
+      disabled={!isMyTurn || submitting}
+      style={({ pressed }) => [
+        styles.button,
+        styles.foldButton,
+        isLandscape && styles.actionButtonLandscape,
+        (pressed || !isMyTurn || submitting) && styles.pressed,
+      ]}>
+      <ThemedText style={styles.foldButtonText}>FOLD</ThemedText>
+    </Pressable>
+  );
+
+  const callButton = (
+    <Pressable
+      onPress={() => submitAction(toCall > 0 ? 'call' : 'check')}
+      disabled={!isMyTurn || submitting}
+      style={({ pressed }) => [
+        styles.button,
+        styles.callButton,
+        isLandscape && styles.actionButtonLandscape,
+        (pressed || !isMyTurn || submitting) && styles.pressed,
+      ]}>
+      <ThemedText style={styles.callButtonText}>{toCall > 0 ? `CALL ${toCall}` : 'CHECK'}</ThemedText>
+    </Pressable>
+  );
+
+  const raiseButtonEl = (
+    <Pressable
+      onPress={() => submitAction('raise', clampRaise(raiseAmount))}
+      disabled={!isMyTurn || submitting}
+      style={({ pressed }) => [
+        styles.raiseButton,
+        isLandscape && styles.actionButtonLandscape,
+        (pressed || !isMyTurn || submitting) && styles.pressed,
+      ]}>
+      <ThemedText style={styles.raiseButtonText}>
+        {clampRaise(raiseAmount) === maxRaiseTarget ? 'ALL-IN' : `RELANCE ${clampRaise(raiseAmount)}`}
+      </ThemedText>
+    </Pressable>
+  );
+
+  return (
+    <View style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.header}>
+          <ThemedText style={styles.headerTitle}>Main #{hand.hand_number}</ThemedText>
+          {blinds && <ThemedText style={styles.headerMuted}>Blindes {blinds.small}/{blinds.big}</ThemedText>}
+          <ThemedText style={styles.headerMuted}>{hand.current_street}</ThemedText>
+          <Pressable onPress={() => setMenuOpen(true)} hitSlop={8}>
+            <ThemedText style={styles.gearIcon}>⚙️</ThemedText>
+          </Pressable>
+        </View>
+
+        <View style={styles.body}>
+          <View style={styles.tableWrapper}>
+            <View style={styles.table}>
+              <TableFelt />
+              <View style={styles.centerArea}>
+                <ThemedText style={styles.potLabel}>Pot total</ThemedText>
+                <Animated.View style={[styles.potPill, { transform: [{ scale: potPulse }] }]}>
+                  <ThemedText style={styles.potPillText}>🪙 {hand.pot_total}</ThemedText>
+                </Animated.View>
+                <View style={styles.boardCards}>
+                  {hand.board_cards.map((c, i) => (
+                    <PlayingCard key={i} card={c} size="medium" />
+                  ))}
+                </View>
+
+                {chipFlightVisible && (
+                  <Animated.View style={[styles.flyingChip, { transform: chipFlight.getTranslateTransform() }]}>
+                    <ThemedText style={styles.flyingChipText}>●</ThemedText>
+                  </Animated.View>
+                )}
+              </View>
+            </View>
+
+            {/* Seats sit on their own layer, straddling the felt's top/bottom
+                rim rather than floating inside it -- like players actually
+                sitting at the rail, not hovering over the green. */}
+            <View style={styles.opponentsRow} pointerEvents="box-none">
+              {opponents.map((item) => renderSeat(item, item.id))}
+            </View>
+            <View style={styles.meRow} pointerEvents="box-none">
+              {me && renderSeat(me, me.id)}
+            </View>
+          </View>
+
+          <View style={styles.actionsPanel}>
+            {me?.stack === 0 && (
+              <Pressable
+                onPress={handleRebuy}
+                disabled={rebuying}
+                style={({ pressed }) => [styles.button, styles.foldButton, (pressed || rebuying) && styles.pressed]}>
+                {rebuying ? (
+                  <ActivityIndicator color={TEXT_LIGHT} />
+                ) : (
+                  <ThemedText style={styles.foldButtonText}>Rebuy</ThemedText>
+                )}
+              </Pressable>
+            )}
+
+            {isGameOver && gameOverDismissedFor === hand.id ? null : isGameOver ? (
+              <View style={styles.gameOverCard}>
+                <ThemedText style={styles.headerTitle}>Partie terminée</ThemedText>
+                <ThemedText style={[styles.headerMuted, styles.gameOverText]}>
+                  Il ne reste qu&apos;un seul joueur avec des jetons. La partie reprendra si quelqu&apos;un
+                  refait un rebuy.
                 </ThemedText>
+                <View style={styles.gameOverButtons}>
+                  <Pressable
+                    onPress={() => setGameOverDismissedFor(hand.id)}
+                    style={({ pressed }) => [styles.button, styles.foldButton, pressed && styles.pressed]}>
+                    <ThemedText style={styles.foldButtonText}>Rester</ThemedText>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleLeaveGame}
+                    disabled={leaving}
+                    style={({ pressed }) => [styles.button, styles.callButton, (pressed || leaving) && styles.pressed]}>
+                    {leaving ? (
+                      <ActivityIndicator color={TEXT_LIGHT} />
+                    ) : (
+                      <ThemedText style={styles.callButtonText}>Quitter</ThemedText>
+                    )}
+                  </Pressable>
+                </View>
+              </View>
+            ) : hand.status === 'complete' ? (
+              <Pressable
+                onPress={handleStartNext}
+                disabled={startingNext}
+                style={({ pressed }) => [styles.button, styles.callButton, (pressed || startingNext) && styles.pressed]}>
+                {startingNext ? (
+                  <ActivityIndicator color={TEXT_LIGHT} />
+                ) : (
+                  <ThemedText style={styles.callButtonText}>
+                    {nextHandCountdown ? `Main suivante dans ${nextHandCountdown}s...` : 'Main suivante'}
+                  </ThemedText>
+                )}
+              </Pressable>
+            ) : isLandscape ? (
+              <View style={styles.landscapeRow}>
+                {actionError && <ThemedText style={styles.error}>{actionError}</ThemedText>}
+                <Pressable onPress={() => setMenuOpen(true)} hitSlop={8} style={styles.menuIconButton}>
+                  <ThemedText style={styles.gearIcon}>⚙️</ThemedText>
+                </Pressable>
+                {stepper}
+                <View style={styles.sliderFlexLandscape}>{sliderEl}</View>
+                {foldButton}
+                {callButton}
+                {raiseButtonEl}
+              </View>
+            ) : (
+              <View style={styles.actionsColumn}>
+                {actionError && <ThemedText style={styles.error}>{actionError}</ThemedText>}
+                {stepper}
+                {sliderEl}
+                {presetsEl}
+                <View style={styles.foldCallRow}>
+                  {foldButton}
+                  {callButton}
+                </View>
+                {raiseButtonEl}
+              </View>
+            )}
+          </View>
+        </View>
+      </SafeAreaView>
+
+      <Modal visible={menuOpen} animationType="fade" transparent onRequestClose={() => setMenuOpen(false)}>
+        <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)}>
+          <View style={styles.menuCard}>
+            <Pressable
+              onPress={handleLeaveGame}
+              disabled={leaving}
+              style={({ pressed }) => [styles.menuItem, pressed && styles.pressed]}>
+              {leaving ? (
+                <ActivityIndicator color={TEXT_LIGHT} />
+              ) : (
+                <ThemedText style={styles.menuItemTextDanger}>Quitter la partie</ThemedText>
               )}
             </Pressable>
-          </ThemedView>
-        ) : (
-          <ThemedView style={styles.actions}>
-            {actionError && <ThemedText style={styles.error}>{actionError}</ThemedText>}
-
-            <ThemedView style={styles.quickBets}>
-              <QuickButton label="1/2 pot" onPress={() => setQuickRaise(0.5)} theme={theme} />
-              <QuickButton label="Pot" onPress={() => setQuickRaise(1)} theme={theme} />
-              <QuickButton
-                label="Min"
-                onPress={() => setRaiseText(String(clampRaise(minRaiseTarget)))}
-                theme={theme}
-              />
-              <QuickButton
-                label="All-in"
-                onPress={() => setRaiseText(String(clampRaise(maxRaiseTarget)))}
-                theme={theme}
-              />
-            </ThemedView>
-
-            <TextInput
-              value={raiseText}
-              onChangeText={setRaiseText}
-              keyboardType="number-pad"
-              editable={isMyTurn && !submitting}
-              placeholder={`Relancer à... (min ${minRaiseTarget})`}
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
-            />
-
-            <ThemedView style={styles.actionButtons}>
-              <Pressable
-                onPress={() => submitAction('fold')}
-                disabled={!isMyTurn || submitting}
-                style={({ pressed }) => [
-                  styles.button,
-                  styles.secondaryButton,
-                  { borderColor: theme.text },
-                  (pressed || !isMyTurn || submitting) && styles.pressed,
-                ]}>
-                <ThemedText style={styles.buttonText}>Se coucher</ThemedText>
-              </Pressable>
-
-              <Pressable
-                onPress={() => submitAction(toCall > 0 ? 'call' : 'check')}
-                disabled={!isMyTurn || submitting}
-                style={({ pressed }) => [
-                  styles.button,
-                  { backgroundColor: theme.text },
-                  (pressed || !isMyTurn || submitting) && styles.pressed,
-                ]}>
-                <ThemedText style={[styles.buttonText, { color: theme.background }]}>
-                  {toCall > 0 ? `Suivre (${toCall})` : 'Check'}
-                </ThemedText>
-              </Pressable>
-
-              <Pressable
-                onPress={() => submitAction('raise', clampRaise(Number(raiseText) || minRaiseTarget))}
-                disabled={!isMyTurn || submitting}
-                style={({ pressed }) => [
-                  styles.button,
-                  { backgroundColor: theme.text },
-                  (pressed || !isMyTurn || submitting) && styles.pressed,
-                ]}>
-                <ThemedText style={[styles.buttonText, { color: theme.background }]}>
-                  Relancer {raiseText ? `à ${clampRaise(Number(raiseText) || minRaiseTarget)}` : `(min ${minRaiseTarget})`}
-                </ThemedText>
-              </Pressable>
-            </ThemedView>
-          </ThemedView>
-        )}
-      </SafeAreaView>
-    </ThemedView>
+            <Pressable
+              onPress={() => setMenuOpen(false)}
+              style={({ pressed }) => [styles.menuItem, pressed && styles.pressed]}>
+              <ThemedText style={styles.menuItemText}>Annuler</ThemedText>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+    </View>
   );
 }
 
-function QuickButton({
-  label,
-  onPress,
-  theme,
-}: {
-  label: string;
-  onPress: () => void;
-  theme: ReturnType<typeof useTheme>;
-}) {
+function PresetChip({ label, onPress }: { label: string; onPress: () => void }) {
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.quickButton,
-        { borderColor: theme.backgroundSelected },
-        pressed && styles.pressed,
-      ]}>
-      <ThemedText type="small">{label}</ThemedText>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.presetChip, pressed && styles.pressed]}>
+      <ThemedText style={styles.presetChipText}>{label}</ThemedText>
     </Pressable>
   );
 }
@@ -717,13 +886,14 @@ function QuickButton({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: DARK_BG,
   },
   safeArea: {
     flex: 1,
-    padding: Spacing.three,
+    padding: Spacing.two,
     gap: Spacing.two,
-    maxWidth: 480,
     width: '100%',
+    maxWidth: 900,
     alignSelf: 'center',
   },
   centered: {
@@ -733,41 +903,88 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'baseline',
+    alignItems: 'center',
     paddingHorizontal: Spacing.one,
   },
-  oval: {
-    width: OVAL_WIDTH,
-    height: OVAL_HEIGHT,
-    alignSelf: 'center',
-    backgroundColor: FELT,
-    borderRadius: OVAL_HEIGHT / 2,
-    borderWidth: 6,
-    borderColor: FELT_EDGE,
-    marginTop: Spacing.three,
+  headerTitle: {
+    color: TEXT_LIGHT,
+    fontSize: 14,
+    fontWeight: '700',
   },
-  centerArea: {
+  headerMuted: {
+    color: TEXT_MUTED,
+    fontSize: 13,
+  },
+  gearIcon: {
+    fontSize: 18,
+  },
+  // Portrait: table above, actions below (column). Landscape: side by side
+  // (row) so the table can actually become the wide oval it's meant to be --
+  // a landscape phone/tablet screen is exactly the aspect ratio that shape
+  // needs, which a portrait screen structurally can't provide.
+  body: {
+    flex: 1,
+    gap: Spacing.two,
+  },
+  // The felt itself is a clipped rounded box containing only the board/pot
+  // -- it never competes with the seats for space, which is what let the
+  // pot/board collapse to zero height and overlap a seat when content ran
+  // tall. Seats live on tableWrapper's own layer instead, free to overlap
+  // the felt's rim the way players actually sit at a real table.
+  tableWrapper: {
+    flex: 1,
+    marginTop: Spacing.four,
+    marginBottom: Spacing.four,
+    position: 'relative',
+  },
+  table: {
     position: 'absolute',
+    top: 0,
     left: 0,
     right: 0,
-    // Starts below the fixed opponent row (avatar + name + stack + bet
-    // pill) so the board/pot never share vertical space with seats.
-    top: SEAT_ROW_TOP + SEAT_SIZE + 46,
     bottom: 0,
-    alignItems: 'center',
+    borderWidth: 8,
+    borderColor: FELT_EDGE,
+    borderRadius: Spacing.five,
+    overflow: 'hidden',
+  },
+  opponentsRow: {
+    position: 'absolute',
+    top: -Spacing.four,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: Spacing.two,
+    gap: Spacing.three,
+  },
+  centerArea: {
+    flex: 1,
+    alignItems: 'center',
+    // Explicit top offset instead of justifyContent:'center' -- centering
+    // measured as ignoring paddingVertical entirely in this RN-web setup, so
+    // it couldn't guarantee clearance from the opponent overlay hanging down
+    // into the felt (see opponentsRow's negative top). A flex-start with a
+    // hard paddingTop unambiguously starts the pot/board below that reach.
+    justifyContent: 'flex-start',
+    gap: 2,
+    paddingTop: 112,
+  },
+  potLabel: {
+    color: '#ffffff99',
+    fontSize: 11,
   },
   boardCards: {
     flexDirection: 'row',
     gap: Spacing.one,
     minHeight: 58,
+    marginTop: Spacing.one,
   },
   potPill: {
     backgroundColor: '#00000055',
     borderRadius: 999,
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.one,
+    paddingVertical: Spacing.half,
   },
   potPillText: {
     color: GOLD,
@@ -775,7 +992,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   flyingChip: {
-    position: 'absolute',
     width: 24,
     height: 24,
     borderRadius: 12,
@@ -790,101 +1006,51 @@ const styles = StyleSheet.create({
     fontSize: 10,
   },
   seat: {
-    position: 'absolute',
-    width: SEAT_SIZE,
+    maxWidth: SEAT_MAX_WIDTH,
     alignItems: 'center',
+  },
+  meRow: {
+    position: 'absolute',
+    bottom: -Spacing.four,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  seatCardsRow: {
+    flexDirection: 'row',
     gap: 2,
+    minHeight: 20,
+    alignItems: 'flex-end',
+  },
+  faceDownCard: {
+    width: 13,
+    height: 18,
+    borderRadius: 2,
+    backgroundColor: '#9c2b2b',
+    borderWidth: 1,
+    borderColor: '#6e1c1c',
+  },
+  faceDownCardOffset: {
+    marginRight: -5,
+    transform: [{ rotate: '-8deg' }],
   },
   avatarWrap: {
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#3a3f47',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#00000000',
-  },
-  avatarActing: {
-    borderColor: GOLD,
-    backgroundColor: '#5a4a1f',
-    shadowColor: GOLD,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  avatarWinner: {
-    borderColor: GOLD,
-    backgroundColor: '#6b5417',
-  },
-  avatarFolded: {
-    opacity: 0.4,
-  },
-  avatarInitial: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  dealerChip: {
-    position: 'absolute',
-    right: -4,
-    top: -4,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: GOLD,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#00000055',
-  },
-  dealerChipText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#000',
-  },
-  seatName: {
-    color: '#fff',
-    maxWidth: SEAT_SIZE,
-  },
-  seatNameActing: {
-    color: GOLD,
-    fontWeight: '700',
-  },
-  seatStack: {
-    color: '#e8e8e8',
-    fontSize: 11,
-  },
-  betPill: {
-    backgroundColor: '#00000066',
-    borderRadius: 999,
-    paddingHorizontal: Spacing.two,
-    paddingVertical: 1,
-  },
-  betPillText: {
-    color: GOLD,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  seatCards: {
-    flexDirection: 'row',
-    gap: 2,
     marginTop: 2,
   },
-  logLine: {
-    textAlign: 'center',
-  },
-  myArea: {
+  timerRingBox: {
+    position: 'absolute',
+    width: 46,
+    height: 46,
     alignItems: 'center',
-    gap: Spacing.one,
-    paddingVertical: Spacing.two,
+    justifyContent: 'center',
   },
-  myAvatar: {
+  timerRingBoxMe: {
+    width: 54,
+    height: 54,
+  },
+  avatar: {
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -894,37 +1060,208 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#00000000',
   },
-  myCardsRow: {
-    flexDirection: 'row',
-    gap: Spacing.two,
+  avatarMe: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
   },
-  myInfo: {
+  avatarWinner: {
+    borderColor: GOLD,
+    backgroundColor: '#6b5417',
+  },
+  avatarEmoji: {
+    fontSize: 16,
+    color: TEXT_LIGHT,
+  },
+  dealerDisc: {
+    position: 'absolute',
+    right: -4,
+    bottom: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#00000055',
+  },
+  dealerDiscText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#000',
+  },
+  namePill: {
+    backgroundColor: '#00000088',
+    borderRadius: 999,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 2,
+    marginTop: -8,
+    alignItems: 'center',
+    maxWidth: SEAT_MAX_WIDTH + 10,
+  },
+  namePillText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  namePillTextWinner: {
+    color: GOLD,
+  },
+  namePillStack: {
+    color: GREEN,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  allInBadge: {
+    backgroundColor: '#ff6b35',
+    borderRadius: 999,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 1,
+    marginTop: 2,
+  },
+  allInBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  actionBadge: {
+    backgroundColor: '#1a1a1acc',
+    borderRadius: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 2,
+    marginTop: 2,
     alignItems: 'center',
   },
-  actions: {
+  actionBadgeFold: {
+    backgroundColor: '#4a4a4a99',
+  },
+  actionBadgeRaise: {
+    backgroundColor: RED,
+  },
+  actionBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  betChip: {
+    backgroundColor: '#00000066',
+    borderRadius: 999,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 1,
+    marginTop: 2,
+  },
+  betChipText: {
+    color: GOLD,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  myHandDescr: {
+    color: '#cfd3da',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  actionsPanel: {
+    justifyContent: 'center',
+  },
+  actionsColumn: {
     gap: Spacing.two,
   },
-  quickBets: {
+  // Landscape squeezes everything the mockup shows in one wide row: a
+  // settings icon, the stepper, a slider that stretches to fill whatever
+  // width is left, then Fold/Call/Raise at fixed widths.
+  landscapeRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: Spacing.two,
   },
-  quickButton: {
+  menuIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: Spacing.two,
+    backgroundColor: DARK_SURFACE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sliderFlexLandscape: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: Spacing.two,
-    paddingVertical: Spacing.two,
-    alignItems: 'center',
   },
-  input: {
+  actionButtonLandscape: {
+    flex: undefined,
+    minWidth: 90,
+    paddingHorizontal: Spacing.three,
+  },
+  stepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+  },
+  stepperButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     borderWidth: 1,
-    borderRadius: Spacing.two,
+    borderColor: '#ffffff33',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperButtonText: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: TEXT_LIGHT,
+  },
+  amountBox: {
+    minWidth: 100,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
-    fontSize: 16,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: '#ffffff33',
+    alignItems: 'center',
   },
-  actionButtons: {
+  amountBoxText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: TEXT_LIGHT,
+  },
+  slider: {
+    width: '100%',
+    height: 36,
+  },
+  presetRow: {
     flexDirection: 'row',
     gap: Spacing.two,
+  },
+  presetChip: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ffffff33',
+    borderRadius: Spacing.two,
+    paddingVertical: Spacing.one,
+    alignItems: 'center',
+  },
+  presetChipText: {
+    color: TEXT_LIGHT,
+    fontSize: 13,
+  },
+  foldCallRow: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+  },
+  raiseButton: {
+    backgroundColor: RED,
+    paddingVertical: Spacing.three,
+    borderRadius: Spacing.three,
+    alignItems: 'center',
+  },
+  raiseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   button: {
     flex: 1,
@@ -932,17 +1269,70 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
     alignItems: 'center',
   },
-  secondaryButton: {
+  foldButton: {
     borderWidth: 1,
+    borderColor: '#ffffff44',
+    backgroundColor: DARK_SURFACE,
   },
-  buttonText: {
+  foldButtonText: {
+    color: TEXT_LIGHT,
     fontSize: 16,
     fontWeight: '600',
   },
+  callButton: {
+    backgroundColor: GREEN,
+  },
+  callButtonText: {
+    color: '#06210f',
+    fontSize: 16,
+    fontWeight: '700',
+  },
   error: {
-    color: '#e5484d',
+    color: '#ff8a80',
   },
   pressed: {
     opacity: 0.7,
+  },
+  menuBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000000aa',
+    padding: Spacing.four,
+  },
+  menuCard: {
+    width: '100%',
+    maxWidth: 320,
+    borderRadius: Spacing.three,
+    overflow: 'hidden',
+    backgroundColor: DARK_SURFACE,
+  },
+  menuItem: {
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    alignItems: 'center',
+  },
+  menuItemText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: TEXT_LIGHT,
+  },
+  menuItemTextDanger: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ff8a80',
+  },
+  gameOverCard: {
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.two,
+  },
+  gameOverText: {
+    textAlign: 'center',
+  },
+  gameOverButtons: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    width: '100%',
   },
 });
