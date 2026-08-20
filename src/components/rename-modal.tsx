@@ -3,7 +3,7 @@ import { Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { Brand, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 interface RenameModalProps {
@@ -34,7 +34,7 @@ export function RenameModal({ visible, initialValue, onClose, onSave }: RenameMo
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
-        <ThemedView type="backgroundElement" style={styles.sheet}>
+        <ThemedView style={styles.sheet}>
           <ThemedText type="smallBold" style={styles.title}>
             Modifier mon pseudo
           </ThemedText>
@@ -44,31 +44,24 @@ export function RenameModal({ visible, initialValue, onClose, onSave }: RenameMo
             maxLength={24}
             autoFocus
             placeholderTextColor={theme.textSecondary}
-            style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
+            style={styles.input}
           />
           <View style={styles.buttonRow}>
             <Pressable
               onPress={onClose}
               disabled={saving}
-              style={({ pressed }) => [
-                styles.button,
-                styles.secondaryButton,
-                { borderColor: theme.text },
-                pressed && styles.pressed,
-              ]}>
-              <ThemedText style={styles.buttonText}>Annuler</ThemedText>
+              style={({ pressed }) => [styles.button, styles.secondaryButton, pressed && styles.pressed]}>
+              <ThemedText style={[styles.buttonText, styles.secondaryButtonText]}>Annuler</ThemedText>
             </Pressable>
             <Pressable
               onPress={handleSave}
               disabled={saving || !value.trim()}
               style={({ pressed }) => [
                 styles.button,
-                { backgroundColor: theme.text },
+                styles.primaryButton,
                 (pressed || saving || !value.trim()) && styles.pressed,
               ]}>
-              <ThemedText style={[styles.buttonText, { color: theme.background }]}>
-                Enregistrer
-              </ThemedText>
+              <ThemedText style={[styles.buttonText, styles.primaryButtonText]}>Enregistrer</ThemedText>
             </Pressable>
           </View>
         </ThemedView>
@@ -82,13 +75,16 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#00000088',
+    backgroundColor: '#00000099',
     padding: Spacing.four,
   },
   sheet: {
     width: '100%',
     maxWidth: 360,
-    borderRadius: Spacing.three,
+    backgroundColor: '#1b212b',
+    borderWidth: 1,
+    borderColor: '#2a323f',
+    borderRadius: Spacing.four,
     padding: Spacing.four,
     gap: Spacing.three,
   },
@@ -96,11 +92,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   input: {
-    borderWidth: 1,
+    borderWidth: 1.5,
+    borderColor: '#2a323f',
     borderRadius: Spacing.two,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
     fontSize: 16,
+    color: '#ffffff',
+    backgroundColor: '#10141a',
   },
   buttonRow: {
     flexDirection: 'row',
@@ -112,12 +111,22 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
     alignItems: 'center',
   },
+  primaryButton: {
+    backgroundColor: Brand.gold,
+  },
+  primaryButtonText: {
+    color: '#241a02',
+  },
   secondaryButton: {
-    borderWidth: 1,
+    borderWidth: 1.5,
+    borderColor: '#3a4453',
+  },
+  secondaryButtonText: {
+    color: '#9aa4b0',
   },
   buttonText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.7,

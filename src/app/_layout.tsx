@@ -1,14 +1,29 @@
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
-import { useColorScheme } from 'react-native';
 
+import { Brand } from '@/constants/theme';
 import { ensureSession } from '@/lib/supabase';
 
 SplashScreen.preventAutoHideAsync();
 
+// The app is a dark casino surface everywhere (see theme.ts) -- the native
+// header bar needs to follow suit rather than react-navigation's default
+// light theme, or every screen with a header shows a jarring white bar
+// above a dark body.
+const AppTheme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    background: '#0d1117',
+    card: '#1b212b',
+    text: '#ffffff',
+    border: '#2a323f',
+    primary: Brand.gold,
+  },
+};
+
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
   const [sessionReady, setSessionReady] = useState(false);
 
   useEffect(() => {
@@ -25,8 +40,15 @@ export default function RootLayout() {
   }
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack screenOptions={{ headerShown: false }}>
+    <ThemeProvider value={AppTheme}>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          headerStyle: { backgroundColor: '#1b212b' },
+          headerTintColor: '#ffffff',
+          headerTitleStyle: { color: '#ffffff' },
+          headerShadowVisible: false,
+        }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="join" options={{ headerShown: true, title: 'Rejoindre une partie' }} />
         <Stack.Screen name="lobby/[gameId]" options={{ headerShown: true, title: 'Lobby' }} />

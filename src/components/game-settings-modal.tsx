@@ -4,8 +4,7 @@ import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { StepperRow } from '@/components/stepper-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { Brand, Spacing } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 
 // Poker settings only ever take a handful of sane values in practice, so
@@ -43,7 +42,6 @@ interface GameSettingsModalProps {
 }
 
 export function GameSettingsModal({ visible, onClose, gameId, initial }: GameSettingsModalProps) {
-  const theme = useTheme();
   const [blindPair, setBlindPair] = useState<(typeof BLIND_PRESETS)[number]>(BLIND_PRESETS[1]);
   const [stack, setStack] = useState<(typeof STACK_PRESETS)[number]>(STACK_PRESETS[1]);
   const [turnDuration, setTurnDuration] = useState<(typeof TURN_DURATION_PRESETS)[number]>(
@@ -91,7 +89,8 @@ export function GameSettingsModal({ visible, onClose, gameId, initial }: GameSet
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
-        <ThemedView type="backgroundElement" style={styles.sheet}>
+        <ThemedView style={styles.sheet}>
+          <View style={styles.grabber} />
           <ThemedText type="smallBold" style={styles.title}>
             Paramètres de la partie
           </ThemedText>
@@ -131,23 +130,14 @@ export function GameSettingsModal({ visible, onClose, gameId, initial }: GameSet
             <Pressable
               onPress={onClose}
               disabled={saving}
-              style={({ pressed }) => [
-                styles.button,
-                styles.secondaryButton,
-                { borderColor: theme.text },
-                pressed && styles.pressed,
-              ]}>
-              <ThemedText style={styles.buttonText}>Annuler</ThemedText>
+              style={({ pressed }) => [styles.button, styles.secondaryButton, pressed && styles.pressed]}>
+              <ThemedText style={[styles.buttonText, styles.secondaryButtonText]}>Annuler</ThemedText>
             </Pressable>
             <Pressable
               onPress={handleSave}
               disabled={saving}
-              style={({ pressed }) => [
-                styles.button,
-                { backgroundColor: theme.text },
-                (pressed || saving) && styles.pressed,
-              ]}>
-              <ThemedText style={[styles.buttonText, { color: theme.background }]}>
+              style={({ pressed }) => [styles.button, styles.primaryButton, (pressed || saving) && styles.pressed]}>
+              <ThemedText style={[styles.buttonText, styles.primaryButtonText]}>
                 {saving ? 'Enregistrement...' : 'Enregistrer'}
               </ThemedText>
             </Pressable>
@@ -162,20 +152,31 @@ const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: '#00000088',
+    backgroundColor: '#00000099',
   },
   sheet: {
+    backgroundColor: '#1b212b',
+    borderTopWidth: 1,
+    borderColor: '#2a323f',
     borderTopLeftRadius: Spacing.four,
     borderTopRightRadius: Spacing.four,
     padding: Spacing.four,
     gap: Spacing.half,
+  },
+  grabber: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#3a4453',
+    alignSelf: 'center',
+    marginBottom: Spacing.three,
   },
   title: {
     textAlign: 'center',
     marginBottom: Spacing.two,
   },
   error: {
-    color: '#e5484d',
+    color: Brand.red,
     marginTop: Spacing.two,
   },
   buttonRow: {
@@ -189,12 +190,22 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
     alignItems: 'center',
   },
+  primaryButton: {
+    backgroundColor: Brand.gold,
+  },
+  primaryButtonText: {
+    color: '#241a02',
+  },
   secondaryButton: {
-    borderWidth: 1,
+    borderWidth: 1.5,
+    borderColor: '#3a4453',
+  },
+  secondaryButtonText: {
+    color: '#9aa4b0',
   },
   buttonText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.7,

@@ -5,8 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { Brand, Spacing } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 
 interface ActiveGame {
@@ -15,7 +14,6 @@ interface ActiveGame {
 }
 
 export default function HomeScreen() {
-  const theme = useTheme();
   const [activeGames, setActiveGames] = useState<ActiveGame[]>([]);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -70,29 +68,28 @@ export default function HomeScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <ThemedText type="title" style={styles.title}>
-          Poker Friend
-        </ThemedText>
-        <ThemedText themeColor="textSecondary" style={styles.subtitle}>
-          Poker Texas Hold&apos;em en argent fictif, entre amis.
-        </ThemedText>
+        <ThemedView style={styles.hero}>
+          <ThemedText style={styles.suitRow}>♠ ♥ ♦ ♣</ThemedText>
+          <ThemedText type="title" style={styles.title}>
+            Poker <ThemedText type="title" style={styles.titleAccent}>Friend</ThemedText>
+          </ThemedText>
+          <ThemedText themeColor="textSecondary" style={styles.subtitle}>
+            Texas Hold&apos;em en argent fictif, entre amis.
+          </ThemedText>
+        </ThemedView>
 
         {activeGames.length > 0 && (
           <ThemedView style={styles.resumeSection}>
-            <ThemedText type="small" themeColor="textSecondary">
+            <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
               Partie{activeGames.length > 1 ? 's' : ''} en cours
             </ThemedText>
             {activeGames.map((item) => (
               <Pressable
                 key={item.gameId}
                 onPress={() => router.push(`/lobby/${item.gameId}`)}
-                style={({ pressed }) => [
-                  styles.button,
-                  styles.secondaryButton,
-                  { borderColor: theme.text },
-                  pressed && styles.pressed,
-                ]}>
-                <ThemedText style={styles.buttonText}>Reprendre {item.inviteCode}</ThemedText>
+                style={({ pressed }) => [styles.resumeCard, pressed && styles.pressed]}>
+                <ThemedText style={styles.resumeIcon}>▶</ThemedText>
+                <ThemedText style={styles.resumeText}>Reprendre {item.inviteCode}</ThemedText>
               </Pressable>
             ))}
           </ThemedView>
@@ -106,13 +103,13 @@ export default function HomeScreen() {
             disabled={creating}
             style={({ pressed }) => [
               styles.button,
-              { backgroundColor: theme.text },
+              styles.primaryButton,
               (pressed || creating) && styles.pressed,
             ]}>
             {creating ? (
-              <ActivityIndicator color={theme.background} />
+              <ActivityIndicator color="#241a02" />
             ) : (
-              <ThemedText style={[styles.buttonText, { color: theme.background }]}>
+              <ThemedText style={[styles.buttonText, styles.primaryButtonText]}>
                 Créer une partie
               </ThemedText>
             )}
@@ -123,7 +120,6 @@ export default function HomeScreen() {
             style={({ pressed }) => [
               styles.button,
               styles.secondaryButton,
-              { borderColor: theme.text },
               pressed && styles.pressed,
             ]}>
             <ThemedText style={styles.buttonText}>Rejoindre une partie</ThemedText>
@@ -145,8 +141,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     gap: Spacing.five,
   },
+  hero: {
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  suitRow: {
+    fontSize: 22,
+    letterSpacing: 10,
+    color: Brand.gold,
+    opacity: 0.85,
+  },
   title: {
     textAlign: 'center',
+    fontSize: 40,
+    lineHeight: 46,
+  },
+  titleAccent: {
+    fontSize: 40,
+    lineHeight: 46,
+    color: Brand.gold,
   },
   subtitle: {
     textAlign: 'center',
@@ -162,8 +175,32 @@ const styles = StyleSheet.create({
     maxWidth: 360,
     gap: Spacing.two,
   },
+  sectionLabel: {
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  resumeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    backgroundColor: '#1b212b',
+    borderWidth: 1,
+    borderColor: '#2a323f',
+    borderRadius: Spacing.three,
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.three,
+  },
+  resumeIcon: {
+    color: Brand.green,
+    fontSize: 14,
+  },
+  resumeText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   error: {
-    color: '#e5484d',
+    color: Brand.red,
     textAlign: 'center',
   },
   button: {
@@ -171,12 +208,25 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
     alignItems: 'center',
   },
+  primaryButton: {
+    backgroundColor: Brand.gold,
+    shadowColor: Brand.gold,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  primaryButtonText: {
+    color: '#241a02',
+  },
   secondaryButton: {
-    borderWidth: 1,
+    borderWidth: 1.5,
+    borderColor: '#3a4453',
+    backgroundColor: '#1b212b',
   },
   buttonText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.7,

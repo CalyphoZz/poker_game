@@ -7,8 +7,9 @@ import { GameSettingsModal } from '@/components/game-settings-modal';
 import { RenameModal } from '@/components/rename-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { Brand, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { getAvatarEmoji } from '@/lib/avatarEmoji';
 import { updateMyDisplayName } from '@/lib/profile';
 import { supabase } from '@/lib/supabase';
 
@@ -186,7 +187,7 @@ export default function LobbyScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <ThemedView type="backgroundElement" style={styles.codeBox}>
+        <ThemedView style={styles.codeBox}>
           {myUserId === game.host_user_id && (
             <Pressable
               onPress={() => setSettingsOpen(true)}
@@ -195,7 +196,7 @@ export default function LobbyScreen() {
               <ThemedText style={styles.gearIcon}>⚙️</ThemedText>
             </Pressable>
           )}
-          <ThemedText type="small" themeColor="textSecondary">
+          <ThemedText type="small" themeColor="textSecondary" style={styles.codeLabel}>
             Code d&apos;invitation
           </ThemedText>
           <ThemedText type="title" style={styles.code}>
@@ -212,16 +213,27 @@ export default function LobbyScreen() {
           keyExtractor={(item) => item.id}
           style={styles.list}
           renderItem={({ item }) => (
-            <ThemedView type="backgroundElement" style={styles.playerRow}>
-              <ThemedText style={styles.playerName}>
-                Siège {item.seat_number} · {item.profiles?.display_name ?? 'Joueur'}
-                {item.user_id === game.host_user_id ? ' (host)' : ''}
-                {item.user_id === myUserId ? ' (moi)' : ''}
-                {item.is_bot ? ` (bot ${BOT_DIFFICULTY_LABEL[item.bot_difficulty as 'easy'] ?? ''})` : ''}
-              </ThemedText>
+            <ThemedView style={styles.playerRow}>
+              <ThemedView style={styles.playerAvatar}>
+                <ThemedText style={styles.playerAvatarText}>
+                  {getAvatarEmoji(item.profiles?.display_name) ??
+                    (item.profiles?.display_name?.[0]?.toUpperCase() ?? '?')}
+                </ThemedText>
+              </ThemedView>
+              <ThemedView style={styles.playerInfo}>
+                <ThemedText style={styles.playerName} numberOfLines={1}>
+                  {item.profiles?.display_name ?? 'Joueur'}
+                  {item.user_id === myUserId ? ' (moi)' : ''}
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Siège {item.seat_number}
+                  {item.user_id === game.host_user_id ? ' · Hôte' : ''}
+                  {item.is_bot ? ` · Bot ${BOT_DIFFICULTY_LABEL[item.bot_difficulty as 'easy'] ?? ''}` : ''}
+                </ThemedText>
+              </ThemedView>
               {item.is_bot ? (
                 <Pressable onPress={() => handleRemoveBot(item.user_id)} hitSlop={8}>
-                  <ThemedText themeColor="textSecondary">Retirer</ThemedText>
+                  <ThemedText style={styles.removeText}>Retirer</ThemedText>
                 </Pressable>
               ) : (
                 <ThemedView style={styles.playerRowTrailing}>
@@ -230,9 +242,11 @@ export default function LobbyScreen() {
                       <ThemedText style={styles.pencil}>✏️</ThemedText>
                     </Pressable>
                   )}
-                  <ThemedText themeColor={item.is_ready ? 'text' : 'textSecondary'}>
-                    {item.is_ready ? 'Prêt' : 'Pas prêt'}
-                  </ThemedText>
+                  <ThemedView style={[styles.readyPill, item.is_ready && styles.readyPillActive]}>
+                    <ThemedText style={[styles.readyPillText, item.is_ready && styles.readyPillTextActive]}>
+                      {item.is_ready ? 'Prêt' : 'Pas prêt'}
+                    </ThemedText>
+                  </ThemedView>
                 </ThemedView>
               )}
             </ThemedView>
@@ -241,7 +255,7 @@ export default function LobbyScreen() {
 
         <ThemedView style={styles.actions}>
           {botError && <ThemedText style={styles.error}>{botError}</ThemedText>}
-          <ThemedText type="small" themeColor="textSecondary">
+          <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
             Ajouter un bot pour tester seul
           </ThemedText>
           <ThemedView style={styles.botRow}>
@@ -252,10 +266,11 @@ export default function LobbyScreen() {
                 disabled={addingBot || players.length >= game.max_players}
                 style={({ pressed }) => [
                   styles.botButton,
-                  { borderColor: theme.backgroundSelected },
                   (pressed || addingBot || players.length >= game.max_players) && styles.pressed,
                 ]}>
-                <ThemedText type="small">+ {BOT_DIFFICULTY_LABEL[difficulty]}</ThemedText>
+                <ThemedText type="small" style={styles.botButtonText}>
+                  + {BOT_DIFFICULTY_LABEL[difficulty]}
+                </ThemedText>
               </Pressable>
             ))}
           </ThemedView>
@@ -267,15 +282,14 @@ export default function LobbyScreen() {
             disabled={players.length < 2 || starting}
             style={({ pressed }) => [
               styles.button,
-              { backgroundColor: theme.text },
+              styles.primaryButton,
               (pressed || players.length < 2 || starting) && styles.pressed,
+              (players.length < 2 || starting) && styles.buttonDisabled,
             ]}>
             {starting ? (
-              <ActivityIndicator color={theme.background} />
+              <ActivityIndicator color="#241a02" />
             ) : (
-              <ThemedText style={[styles.buttonText, { color: theme.background }]}>
-                Démarrer la partie
-              </ThemedText>
+              <ThemedText style={styles.primaryButtonText}>Démarrer la partie</ThemedText>
             )}
           </Pressable>
 
@@ -284,10 +298,12 @@ export default function LobbyScreen() {
             disabled={!me}
             style={({ pressed }) => [
               styles.button,
-              { backgroundColor: theme.text },
+              styles.readyButton,
+              me?.is_ready && styles.readyButtonActive,
               (pressed || !me) && styles.pressed,
             ]}>
-            <ThemedText style={[styles.buttonText, { color: theme.background }]}>
+            <ThemedText
+              style={[styles.buttonText, me?.is_ready ? styles.readyButtonActiveText : styles.readyButtonText]}>
               {me?.is_ready ? 'Se marquer pas prêt' : 'Se marquer prêt'}
             </ThemedText>
           </Pressable>
@@ -295,16 +311,11 @@ export default function LobbyScreen() {
           <Pressable
             onPress={handleLeave}
             disabled={leaving}
-            style={({ pressed }) => [
-              styles.button,
-              styles.secondaryButton,
-              { borderColor: theme.text },
-              (pressed || leaving) && styles.pressed,
-            ]}>
+            style={({ pressed }) => [styles.button, styles.secondaryButton, (pressed || leaving) && styles.pressed]}>
             {leaving ? (
               <ActivityIndicator color={theme.text} />
             ) : (
-              <ThemedText style={styles.buttonText}>Quitter</ThemedText>
+              <ThemedText style={[styles.buttonText, styles.secondaryButtonText]}>Quitter</ThemedText>
             )}
           </Pressable>
         </ThemedView>
@@ -350,8 +361,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   codeBox: {
-    borderRadius: Spacing.three,
-    padding: Spacing.three,
+    backgroundColor: '#1b212b',
+    borderWidth: 1,
+    borderColor: '#2a323f',
+    borderRadius: Spacing.four,
+    padding: Spacing.four,
     alignItems: 'center',
     gap: Spacing.one,
     position: 'relative',
@@ -365,25 +379,51 @@ const styles = StyleSheet.create({
   gearIcon: {
     fontSize: 20,
   },
+  codeLabel: {
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
   code: {
     letterSpacing: 6,
+    color: Brand.gold,
+    fontSize: 36,
+    lineHeight: 42,
   },
   list: {
     flex: 1,
   },
   error: {
-    color: '#e5484d',
+    color: Brand.red,
   },
   playerRow: {
-    borderRadius: Spacing.two,
+    backgroundColor: '#1b212b',
+    borderWidth: 1,
+    borderColor: '#2a323f',
+    borderRadius: Spacing.three,
     padding: Spacing.three,
     marginBottom: Spacing.two,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: Spacing.two,
+  },
+  playerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#2a323f',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playerAvatarText: {
+    fontSize: 18,
+  },
+  playerInfo: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    gap: 2,
   },
   playerName: {
-    flexShrink: 1,
+    fontWeight: '700',
   },
   playerRowTrailing: {
     flexDirection: 'row',
@@ -394,8 +434,34 @@ const styles = StyleSheet.create({
   pencil: {
     fontSize: 16,
   },
+  removeText: {
+    color: Brand.red,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  readyPill: {
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#2a323f',
+  },
+  readyPillActive: {
+    backgroundColor: '#12331f',
+  },
+  readyPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#9aa4b0',
+  },
+  readyPillTextActive: {
+    color: Brand.green,
+  },
   actions: {
     gap: Spacing.two,
+  },
+  sectionLabel: {
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   botRow: {
     flexDirection: 'row',
@@ -406,19 +472,60 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     borderRadius: Spacing.two,
     borderWidth: 1,
+    borderColor: '#2a323f',
+    backgroundColor: '#1b212b',
     alignItems: 'center',
+  },
+  botButtonText: {
+    color: '#9aa4b0',
   },
   button: {
     paddingVertical: Spacing.three,
     borderRadius: Spacing.three,
     alignItems: 'center',
   },
+  primaryButton: {
+    backgroundColor: Brand.gold,
+    shadowColor: Brand.gold,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  primaryButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#241a02',
+  },
+  buttonDisabled: {
+    backgroundColor: '#3a4453',
+    shadowOpacity: 0,
+  },
+  readyButton: {
+    borderWidth: 1.5,
+    borderColor: Brand.green,
+    backgroundColor: 'transparent',
+  },
+  readyButtonActive: {
+    backgroundColor: Brand.green,
+  },
+  readyButtonText: {
+    color: Brand.green,
+  },
+  readyButtonActiveText: {
+    color: '#0a2515',
+  },
   secondaryButton: {
-    borderWidth: 1,
+    borderWidth: 1.5,
+    borderColor: '#3a4453',
+    backgroundColor: '#1b212b',
+  },
+  secondaryButtonText: {
+    color: '#9aa4b0',
   },
   buttonText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.7,
